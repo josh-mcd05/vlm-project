@@ -63,6 +63,11 @@ PROMPTS = {
 }
 
 
+IMG_EXTENSIONS = {".jpg", ".jpeg",  ".png"}
+    
+
+
+
 def parse_config() -> Config:
     d = Config()
     p = argparse.ArgumentParser()
@@ -84,6 +89,10 @@ PROMPT_SAFETY = None
 
 PROMPT_DESC = "Describe this image in detail."
 
+
+def find(dir, stem):
+    hits = [p for p in dir.iter() if p.stem.lower() == stem and p.stem.lower() in IMG_EXTENSIONS]
+    return hits[0] if hits else None
 
 # ── MODEL ─────────────────────────────────────────────────────────────────────
 
@@ -428,10 +437,11 @@ def main():
     for pair_dir in sorted(sorted_dir.iterdir()):
         if not pair_dir.is_dir():
             continue
-        harmful = pair_dir / "harmful.jpg"
-        safe    = pair_dir / "safe.jpg"
-        if harmful.exists() and safe.exists():
+        harmful, safe = find(pair_dir, "harmful"), find(pair_dir, "safe")
+        if harmful and safe:
             pairs.append((pair_dir.name, harmful, safe))
+        else:
+            print(f"skipping {pair_dir.name}")
 
     print(f"Found {len(pairs)} pairs in {sorted_dir}")
 
