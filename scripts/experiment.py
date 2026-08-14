@@ -66,8 +66,6 @@ PROMPTS = {
 IMG_EXTENSIONS = {".jpg", ".jpeg",  ".png"}
     
 
-
-
 def parse_config() -> Config:
     d = Config()
     p = argparse.ArgumentParser()
@@ -78,7 +76,6 @@ def parse_config() -> Config:
     p.add_argument("--mu", type=float, default=d.mu)
     p.add_argument("--pool", choices=["last_token", "mean"], default=d.pool)
     p.add_argument("--task", choices=["safety", "propaganda"], default=d.task)
-
         
     return Config(**vars(p.parse_args()))
 
@@ -91,7 +88,7 @@ PROMPT_DESC = "Describe this image in detail."
 
 
 def find(dir, stem):
-    hits = [p for p in dir.iter() if p.stem.lower() == stem and p.stem.lower() in IMG_EXTENSIONS]
+    hits = [p for p in dir.iterdir() if p.stem.lower() == stem and p.suffix.lower() in IMG_EXTENSIONS]
     return hits[0] if hits else None
 
 # ── MODEL ─────────────────────────────────────────────────────────────────────
@@ -306,7 +303,7 @@ def collect_reference_images(sorted_dir, exclude_pair_id):
     for pair_dir in sorted(Path(sorted_dir).iterdir()):
         if not pair_dir.is_dir() or pair_dir.name == str(exclude_pair_id):
             continue
-        safe_path = pair_dir / "safe.jpg"
+        safe_path = pair_dir / "safe"
         if safe_path.exists():
             ref_paths.append(safe_path)
         if len(ref_paths) >= CONFIG.num_reference_images:
