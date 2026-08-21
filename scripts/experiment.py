@@ -218,24 +218,27 @@ def apply_delta_to_pil(clean_tensor, perturbed_tensor, original_image):
 
 # ── REFERENCE CENTROID ────────────────────────────────────────────────────────
 
-def compute_reference_centroid(vlm, processor, ref_images):
+def compute_reference_centroids(vlm, processor, ref_images):
     """
     Compute the safe reference centroid by averaging hidden states
     over multiple diverse safe images under the safety prompt.
     This gives the attack a meaningful 'safe' direction to push toward/away from.
     """
     
-    hidden_states = []
+    hidden_states_safety, hidden_states_description = [], []
     for img in ref_images:
         with torch.no_grad():
-            inputs = prepare_inputs(processor, img, PROMPT_SAFETY)
-            h = get_hidden(vlm, inputs, inputs["pixel_values"])
-            hidden_states.append(h)
+            h_safety = get_hidden(vlm, prepare_inputs(processor, img, PROMPT_SAFETY), inputs["pixel_values"])
+            h_description = get_hidden(vlm, prepare_inputs(processor, img, PROMPT_DESC), inputs["pixel_values"])
+
+            hidden_states_safety.append(h_safety)
+            hidden_states_description.append(h_description)
             del inputs
 
-    centroid = torch.stack(hidden_states).mean(dim=0)
+    safety_centroid = torch.stack(hidden_states_safety).mean(dim=0)
+    description_centroid = torch.stack(hidden_states_description).mean(dim=0)
     print(f"  Centroid computed from {len(ref_images)} reference images.")
-    return centroid
+    return safety_centroid, description_centroid
 
 
 # ── ATTACK ────────────────────────────────────────────────────────────────────
@@ -323,7 +326,7 @@ def run_pair(vlm, processor, pair_id, harmful_path, safe_path, pair_out_dir, sor
     # Compute reference centroid from multiple safe images (excluding this pair)
     print(f"  Computing reference centroid from {CONFIG.num_reference_images} safe images...")
     ref_images = collect_reference_images(sorted_dir, exclude_pair_id=pair_id)
-    h_ref = compute_reference_centroid(vlm, processor, ref_images)
+    h_safety_ref, h_description_ref = compute_reference_centroids(vlm, processor, ref_images)
 
     for direction, target_img, label in [
         ("safe_to_harmful", safe_img,    "A"),
@@ -351,8 +354,15 @@ def run_pair(vlm, processor, pair_id, harmful_path, safe_path, pair_out_dir, sor
 
         # Run attack — now returns clean_pix_s too for delta application
         perturbed, clean_pix_s, delta, loss_history = attack(
-            vlm, processor, target_img, h_ref, h_desc_clean, push_away=push_away
+            vlm, processor, target_img, h_safety_ref, h_desc_clean, push_away=push_away
         )
+
+        with torch.no_grad():
+            in_d = prepare_inputs(processor, perturbed_pil, PROMPT_DESC)
+            in_s = prepare_inputs(processor, perturbed_pil, PROMPT_SAFETY)
+            description_distance = torch.dist(h_description_ref, get_hidden(vlm, in_d, in_d['pixel_values'])).item()
+            safety_distnace = torch.dist(h_description_ref, get_hidden(vlm, in_s, in_s['pixel_values'])).item()
+
 
         # Save perturbed image correctly by applying delta to original PIL image
         perturbed_pil = apply_delta_to_pil(clean_pix_s, perturbed, target_img)
@@ -384,6 +394,8 @@ def run_pair(vlm, processor, pair_id, harmful_path, safe_path, pair_out_dir, sor
             "delta_l2":          delta_l2,
             "final_safety_dist": loss_history[-1]["loss_safety"],
             "final_desc_drift":  loss_history[-1]["loss_desc"],
+            "perturbed_safety_vector_distance":  safety_distnace,
+            "perturbed_description_vector_distance":  description_distance,
         }
         with open(dir_out / "results.json", "w") as f:
             json.dump(dir_result, f, indent=2)
@@ -414,7 +426,8 @@ def run_pair(vlm, processor, pair_id, harmful_path, safe_path, pair_out_dir, sor
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
 
-    del h_ref
+    del h_safety_ref
+    del h_description_ref
 
     # Save combined pair results
     with open(pair_out_dir / "results.json", "w") as f:
