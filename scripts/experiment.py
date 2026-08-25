@@ -306,8 +306,8 @@ def collect_reference_images(sorted_dir, exclude_pair_id):
     for pair_dir in sorted(Path(sorted_dir).iterdir()):
         if not pair_dir.is_dir() or pair_dir.name == str(exclude_pair_id):
             continue
-        safe_path = pair_dir / "safe"
-        if safe_path.exists():
+        safe_path = find(pair_dir, "safe")
+        if safe_path:
             ref_paths.append(safe_path)
         if len(ref_paths) >= CONFIG.num_reference_images:
             break
