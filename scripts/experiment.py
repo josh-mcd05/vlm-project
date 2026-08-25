@@ -228,12 +228,11 @@ def compute_reference_centroids(vlm, processor, ref_images):
     hidden_states_safety, hidden_states_description = [], []
     for img in ref_images:
         with torch.no_grad():
-            h_safety = get_hidden(vlm, prepare_inputs(processor, img, PROMPT_SAFETY), inputs["pixel_values"])
-            h_description = get_hidden(vlm, prepare_inputs(processor, img, PROMPT_DESC), inputs["pixel_values"])
-
-            hidden_states_safety.append(h_safety)
-            hidden_states_description.append(h_description)
-            del inputs
+            in_s = prepare_inputs(processor, img, PROMPT_SAFETY)
+            in_d = prepare_inputs(processor, img, PROMPT_DESC)
+            hidden_states_safety.append(get_hidden(vlm, in_s, in_s["pixel_values"]))
+            hidden_states_description.append(get_hidden(vlm, in_d, in_d["pixel_values"]))
+            del in_s, in_d
 
     safety_centroid = torch.stack(hidden_states_safety).mean(dim=0)
     description_centroid = torch.stack(hidden_states_description).mean(dim=0)
@@ -357,16 +356,16 @@ def run_pair(vlm, processor, pair_id, harmful_path, safe_path, pair_out_dir, sor
             vlm, processor, target_img, h_safety_ref, h_desc_clean, push_away=push_away
         )
 
+        # Save perturbed image correctly by applying delta to original PIL image
+        perturbed_pil = apply_delta_to_pil(clean_pix_s, perturbed, target_img)
+        perturbed_pil.save(dir_out / "perturbed.png")
+
         with torch.no_grad():
             in_d = prepare_inputs(processor, perturbed_pil, PROMPT_DESC)
             in_s = prepare_inputs(processor, perturbed_pil, PROMPT_SAFETY)
             description_distance = torch.dist(h_description_ref, get_hidden(vlm, in_d, in_d['pixel_values'])).item()
-            safety_distnace = torch.dist(h_description_ref, get_hidden(vlm, in_s, in_s['pixel_values'])).item()
+            safety_distance = torch.dist(h_safety_ref, get_hidden(vlm, in_s, in_s['pixel_values'])).item()
 
-
-        # Save perturbed image correctly by applying delta to original PIL image
-        perturbed_pil = apply_delta_to_pil(clean_pix_s, perturbed, target_img)
-        perturbed_pil.save(dir_out / "perturbed.png")
 
         # Perturbed responses — use the correctly reconstructed PIL image
         inputs_pert = prepare_inputs(processor, perturbed_pil, PROMPT_SAFETY)
