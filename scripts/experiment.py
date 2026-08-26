@@ -393,7 +393,7 @@ def run_pair(vlm, processor, pair_id, harmful_path, safe_path, pair_out_dir, sor
             "delta_l2":          delta_l2,
             "final_safety_dist": loss_history[-1]["loss_safety"],
             "final_desc_drift":  loss_history[-1]["loss_desc"],
-            "perturbed_safety_vector_distance":  safety_distnace,
+            "perturbed_safety_vector_distance":  safety_distance,
             "perturbed_description_vector_distance":  description_distance,
         }
         with open(dir_out / "results.json", "w") as f:
