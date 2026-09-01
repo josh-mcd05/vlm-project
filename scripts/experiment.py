@@ -16,22 +16,19 @@ Edit the CONFIG block below, then run:
 """
 
 import gc
-import json
 import csv
-import argparse
-
-from pathlib import Path
-
-import numpy as np
+import json
 import torch
-import torch.nn.functional as F
+import argparse
+import matplotlib
+import numpy as np
 from PIL import Image
-
+from pathlib import Path
+import matplotlib.pyplot as plt
+import torch.nn.functional as F
 from dataclasses import dataclass
 
-import matplotlib
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
@@ -43,12 +40,13 @@ class Config:
     epsilon: float = 0.06
     alpha: float = 0.001
     mu: float = 10.0
-    layer: int = -1
+    layer: str = "late"
     pool: str = "last_token"
     max_tokens: int = 50
     num_reference_images: int = 5
     prompts: int = 0
     task: str = "safety"
+    image_token_id: int = None
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
 
     @property
@@ -73,7 +71,9 @@ def parse_config() -> Config:
     p.add_argument("--output-dir", type=Path, default=d.output_dir)
     p.add_argument("--pgd-steps", type=int, default=d.pgd_steps)
     p.add_argument("--epsilon", type=float, default=d.epsilon)
+    p.add_argument("--epsilon", type=float, default=d.layer)
     p.add_argument("--mu", type=float, default=d.mu)
+    p.add_argument("--layer", choices=['early', 'middle', 'late'], default=d.layer)
     p.add_argument("--pool", choices=["last_token", "mean"], default=d.pool)
     p.add_argument("--task", choices=["safety", "propaganda"], default=d.task)
         
@@ -88,18 +88,21 @@ PROMPT_DESC = "Describe this image in detail."
 
 
 def find(dir, stem):
+    """Find the image files."""
     hits = [p for p in dir.iterdir() if p.stem.lower() == stem and p.suffix.lower() in IMG_EXTENSIONS]
     return hits[0] if hits else None
 
 # ── MODEL ─────────────────────────────────────────────────────────────────────
 
 def load_vlm():
+    """Load the VLM models."""
     from transformers import (
         LlavaNextForConditionalGeneration,
         LlavaNextProcessor,
         BitsAndBytesConfig,
     )
 
+    # should be set to variable or add as arg in argparser
     model_id = "llava-hf/llama3-llava-next-8b-hf"
     print(f"Loading {model_id}...")
 
@@ -117,6 +120,7 @@ def load_vlm():
         low_cpu_mem_usage=True,
     )
     model.eval()
+    CONFIG.image_token_id = model.config.image_token_index
     print(f"Model dtype: {next(model.parameters()).dtype}")
     print(f"VRAM used: {torch.cuda.memory_allocated()/1e9:.2f} GB")
     return model, processor
@@ -125,6 +129,7 @@ def load_vlm():
 # ── HELPERS ───────────────────────────────────────────────────────────────────
 
 def prepare_inputs(processor, image, prompt):
+    """Prepare the inputs to send into the VLMs."""
     conversation = [{"role": "user", "content": [
         {"type": "image"},
         {"type": "text", "text": prompt},
@@ -134,9 +139,15 @@ def prepare_inputs(processor, image, prompt):
     return {k: v.to(CONFIG.device) for k, v in inputs.items()}
 
 
-def pool_hidden(hidden_states):
+def pool_hidden(hidden_states, inputs):
+    """Pool the hidden layers."""
+    # should also include the other pooling methods
     if CONFIG.pool == "last_token":
         return hidden_states[:, -1, :]
+    elif CONFIG.pool == "image_only":
+        masked = (inputs[0] == CONFIG.image_token_id)
+        return hidden_states[:, masked, :]
+
     return hidden_states.mean(dim=1)
 
 
@@ -147,9 +158,19 @@ def get_hidden(vlm, inputs, pixel_values):
     outputs = vlm(**inputs_copy, output_hidden_states=True)
 
     num_layers = len(outputs.hidden_states)
-    idx = CONFIG.layer if CONFIG.layer >= 0 else num_layers + CONFIG.layer
+    # different models have different number of hidden layers, how can we ensure that they are comparable?
+    if CONFIG.layer == "early":
+        # early layer
+        idx = 0
+    elif CONFIG.layer == "middle":
+        # middle layer
+        idx = num_layers//2
+    else:
+        # last layer
+        idx = num_layers - 1
+
     h = outputs.hidden_states[idx]
-    h = pool_hidden(h).float()
+    h = pool_hidden(h, inputs_copy).float()
 
     for i, hs in enumerate(outputs.hidden_states):
         if i != idx:
@@ -160,6 +181,7 @@ def get_hidden(vlm, inputs, pixel_values):
 
 
 def generate(vlm, processor, pixel_values, prompt, image):
+    """Generate a response."""
     inputs = prepare_inputs(processor, image, prompt)
     inputs["pixel_values"] = pixel_values
     with torch.no_grad():
@@ -171,10 +193,6 @@ def generate(vlm, processor, pixel_values, prompt, image):
 def tensor_to_pil(pixel_tensor, original_image):
     """
     Convert perturbed pixel tensor back to a PIL image at original resolution.
-    We apply delta in normalized processor space then map back to pixel space.
-    Instead of decoding the patch tensor (which only gives one tile), we
-    re-derive the perturbation by comparing to the clean tensor and apply it
-    directly to the original PIL image.
     """
     return None  # placeholder — see apply_delta_to_pil below
 
@@ -207,6 +225,7 @@ def apply_delta_to_pil(clean_tensor, perturbed_tensor, original_image):
 
     # Apply delta to original image in pixel space
     perturbed = (orig_tensor + delta).clamp(0, 1)
+    print(perturbed)
     perturbed_np = (perturbed.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
 
     # Resize back to original image dimensions
