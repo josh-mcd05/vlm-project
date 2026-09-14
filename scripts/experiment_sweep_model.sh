@@ -6,7 +6,7 @@
 #SBATCH --mem=48G
 #SBATCH --time=08:00:00
 #SBATCH --output=logs/mu_%A_%a.out
-#SBATCH --array=0-4
+#SBATCH --array=0-3
 
 mkdir -p logs
 
@@ -20,7 +20,7 @@ python experiments/experiment_v3.py \
   --dataset_dir ./sorted \
   --output_dir ./attack_results/model_$MODEL \
   --steps 200 \
-  --epsilon 1 \
+  --epsilon 0.025 \
   --alpha 0.001 \
   --mu 10 \
   --layer_from_last -1 \

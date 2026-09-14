@@ -20,8 +20,11 @@ python experiments/experiment_v3.py \
   --dataset_dir ./sorted \
   --output_dir ./attack_results/pooling_method_$POOL \
   --steps 200 \
-  --epsilon 1 \
+  --epsilon 0.025 \
   --alpha 0.001 \
-  --mu $MU \
+  --mu 10 \
   --layer_from_last -1 \
   --pooling_method $POOL
+
+
+  
